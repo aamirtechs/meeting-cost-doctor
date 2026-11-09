@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>meeting-cost-doctor</title>
+<style>
+*{box-sizing:border-box} body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#f6f8fb;color:#17233b}
+header{background:#0b1f3a;color:#fff;padding:28px 20px;border-bottom:4px solid #d4a72c}
+header .wrap, main{max-width:900px;margin:0 auto}
+header h1{margin:0 0 6px;font-size:28px} header p{margin:0;color:#cfd9e8}
+main{padding:22px 16px 40px}
+.card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 2px 10px rgba(11,31,58,.08)}
+label{font-weight:600;display:block;margin:14px 0 6px}
+textarea{width:100%;min-height:170px;padding:10px;border:1px solid #c9d3e0;border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+input[type=text],input[type=number],input[type=date],select{padding:8px 10px;border:1px solid #c9d3e0;border-radius:8px;max-width:100%}
+.row{display:flex;flex-wrap:wrap;gap:14px} .row>div{flex:1 1 180px}
+button{background:#0b1f3a;color:#fff;border:0;border-radius:8px;padding:10px 18px;cursor:pointer;font-size:15px}
+button.accent{background:#d4a72c;color:#17233b;font-weight:700}
+button.secondary{background:#e7edf5;color:#0b1f3a}
+.btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+pre{background:#0b1f3a;color:#eef3fa;border-radius:10px;padding:16px;overflow:auto;white-space:pre-wrap;min-height:120px;font-size:13px}
+footer{max-width:900px;margin:0 auto;padding:0 16px 30px;color:#5a6a82;font-size:14px}
+a{color:#0b1f3a}
+.note{color:#5a6a82;font-size:13px}
+</style>
+</head>
+<body>
+<header><div class="wrap"><h1>meeting-cost-doctor</h1><p>Price a meeting from attendee hourly rates: each person's cost, the total cost, and the cost per minute. Cost is rate times minutes divided by 60, per attendee.</p></div></header>
+<main>
+<div class="card">
+<label for="file">Choose a file</label>
+<input type="file" id="file" >
+<label for="input">Attendees JSON input (CLI --attendees-file content: a list of name and rate objects)</label>
+<textarea id="input" placeholder="Paste input here, choose a file, or load the sample."></textarea>
+
+<div class="row">
+<div><label for="duration">Duration in minutes (CLI --duration, required, fractions allowed)</label><input type="number" id="duration" value="30" step="any" min="0"></div>
+<div><label for="currency">Currency label (CLI --currency, default USD)</label><input type="text" id="currency" value="USD"></div>
+<div><label for="fname">Attendees file label (for error messages)</label><input type="text" id="fname" value="team.json"></div>
+</div>
+<label for="extra">Extra attendees (CLI --attendee, one per line, in Name:rate form). In the CLI these flags come before the attendees file, and this tool keeps that order.</label>
+<textarea id="extra" style="min-height:70px" placeholder="Alice:100"></textarea>
+<label><input type="checkbox" id="check"> Validate only (CLI --check)</label>
+<div class="btns">
+<button class="accent" id="run">Run</button>
+<button class="secondary" id="sample">Load sample</button>
+
+<button class="secondary" id="download">Download report</button>
+</div>
+<label for="output">Report</label>
+<pre id="output">Press Run to see the report.</pre>
+</div>
+</main>
+<footer>
+<p>Built by AamirTechs. <a href="https://aamirtechs.github.io/">All tools</a> | <a href="https://github.com/aamirtechs/meeting-cost-doctor">Source</a></p>
+<p>Privacy: this tool runs 100% in your browser, nothing is uploaded.</p>
+</footer>
+<script id="core">
+
+function pyReprStr(v){ return "'"+String(v).replace(/\\/g,"\\\\").replace(/'/g,"\\'")+"'"; }
+function pyFloatStr(v){ if(Number.isInteger(v)) return v+".0"; return String(v); }
+function round2(v){ return Math.round(v*100)/100; }
+function fmt2(v){ return round2(v).toFixed(2); }
+function parsePythonFloat(text){
+  var t=String(text).trim();
+  if(/^[+-]?(inf(inity)?|nan)$/i.test(t)) return parseFloat(t.replace(/infinity/i,"Infinity"));
+  if(!/^[+-]?(\d[\d_]*\.?[\d_]*|\.\d[\d_]*)([eE][+-]?[\d_]+)?$/.test(t)) return NaN;
+  return parseFloat(t.replace(/_/g,""));
+}
+function parseAttendeeFlag(text){
+  var idx=text.lastIndexOf(":");
+  if(idx<0) throw new Error("bad attendee format "+pyReprStr(text)+": expected Name:rate, e.g. Alice:100");
+  var name=text.slice(0,idx).trim(), rateText=text.slice(idx+1);
+  if(!name) throw new Error("bad attendee format "+pyReprStr(text)+": name is empty");
+  var rate=parsePythonFloat(rateText);
+  if(isNaN(rate)) throw new Error("bad attendee format "+pyReprStr(text)+": rate "+pyReprStr(rateText)+" is not a number");
+  if(rate<0) throw new Error("bad attendee "+pyReprStr(text)+": rate must not be negative");
+  return {name:name, rate:rate};
+}
+window.runTool = function(inputText, options){
+  options=options||{};
+  try{
+    var attendees=[];
+    var extra=options.extraAttendees||"";
+    String(extra).split(/\r?\n/).forEach(function(line){ if(line.trim()!=="") attendees.push(parseAttendeeFlag(line.trim())); });
+    var fname=options.fileName||"team.json";
+    var text=String(inputText==null?"":inputText);
+    if(text.trim()!==""){
+      var data;
+      try{ data=JSON.parse(text); } catch(e){ throw new Error("attendees file "+fname+" is not valid JSON: "+e.message); }
+      if(!Array.isArray(data)) throw new Error("attendees file "+fname+" must hold a JSON list");
+      data.forEach(function(entry){
+        if(typeof entry!=="object"||entry===null||Array.isArray(entry)||!("name" in entry)||!("rate" in entry)) throw new Error("bad entry in "+fname+": every entry needs name and rate");
+        var rate = typeof entry.rate==="boolean" ? (entry.rate?1:0) : parsePythonFloat(typeof entry.rate==="number"?String(entry.rate):entry.rate);
+        if(isNaN(rate)) throw new Error("bad entry in "+fname+": rate "+pyReprStr(entry.rate)+" is not a number");
+        if(rate<0) throw new Error("bad entry in "+fname+": rate must not be negative");
+        attendees.push({name:String(entry.name), rate:rate});
+      });
+    }
+    var minutes = (options.duration===undefined||options.duration===null||options.duration==="") ? NaN : parseFloat(options.duration);
+    if(!attendees.length) throw new Error("no attendees given: use --attendee or --attendees-file");
+    if(isNaN(minutes)||minutes<=0) throw new Error("duration must be a positive number of minutes");
+    var currency=options.currency||"USD";
+    var per=attendees.map(function(a){ return {name:a.name, rate:a.rate, cost:round2(a.rate*minutes/60)}; });
+    var total=round2(attendees.reduce(function(s,a){ return s+a.rate*minutes/60; },0));
+    var perMin=round2(attendees.reduce(function(s,a){ return s+a.rate; },0)/60);
+    if(options.check) return "OK: "+attendees.length+" attendees, "+pyFloatStr(minutes)+" minutes, total "+total.toFixed(2)+" "+currency;
+    var lines=["Meeting cost ("+currency+")","===================="];
+    per.forEach(function(a){ lines.push(a.name+": "+a.rate.toFixed(2)+"/hr x "+pyFloatStr(minutes)+" min = "+a.cost.toFixed(2)+" "+currency); });
+    lines.push("Total: "+total.toFixed(2)+" "+currency);
+    lines.push("Cost per minute: "+perMin.toFixed(2)+" "+currency);
+    return lines.join("\n");
+  } catch(e){ return "Error: "+e.message; }
+};
+
+</script>
+<script>
+var SAMPLE = `[{"name":"Alice","rate":90},{"name":"Bob","rate":60},{"name":"Carol","rate":120}]`;
+var SAMPLE_NAME = "team.json";
+var pickedName = "";
+var inputEl = document.getElementById("input");
+var outputEl = document.getElementById("output");
+document.getElementById("file").addEventListener("change", function(ev){
+  var f = ev.target.files[0]; if(!f) return; pickedName = f.name;
+  var r = new FileReader(); r.onload = function(){ inputEl.value = r.result; document.getElementById("fname").value = f.name; }; r.readAsText(f);
+});
+function gatherOptions(){ return { fileName: document.getElementById("fname").value || pickedName || "team.json",
+  duration: document.getElementById("duration").value,
+  currency: document.getElementById("currency").value || "USD",
+  check: document.getElementById("check").checked,
+  extraAttendees: document.getElementById("extra").value }; }
+document.getElementById("run").addEventListener("click", function(){
+  try { outputEl.textContent = window.runTool(inputEl.value, gatherOptions()); }
+  catch(e){ outputEl.textContent = "Error: " + e.message; }
+});
+document.getElementById("sample").addEventListener("click", function(){
+  inputEl.value = SAMPLE; pickedName = SAMPLE_NAME;
+  if (window.onSample) window.onSample();
+});
+document.getElementById("download").addEventListener("click", function(){
+  var blob = new Blob([outputEl.textContent], {type:"text/plain"});
+  var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "report.txt"; a.click(); URL.revokeObjectURL(a.href);
+});
+</script>
+</body>
+</html>

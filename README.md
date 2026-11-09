@@ -1,4 +1,5 @@
 # meeting-cost-doctor
+**Live tool:** https://aamirtechs.github.io/meeting-cost-doctor/ (runs in your browser, no install)
 
 Price a meeting from attendee hourly rates, fully locally. Give it
 attendee rates and a duration, and it prints each person's cost, the
